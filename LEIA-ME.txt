@@ -1,0 +1,71 @@
+POPPLAY — provedor RedeFlixApi (redeflixapi.click)
+==================================================
+
+O Popplay busca automaticamente o vídeo pelo ID TMDB e reproduz o MP4/HLS
+direto nos controles próprios, sem campo de URL e sem player de terceiro no
+frontend.
+
+Como funciona
+-------------
+A resolução é assíncrona: GET /api/movie/{id} (ou /api/serie/{id}/{t}/{e})
+responde na hora — se já houver cache, devolve o resultado; senão devolve
+HTTP 202 com {job}. O frontend faz polling em /api/job/{job} a cada 4 s, então
+nenhuma requisição fica pendurada (evita erro 524 do proxy da prévia).
+- Filme: GET /api/movie/{id_tmdb}  -> abre https://redeflixapi.click/filme/{id}
+- Série: GET /api/serie/{id}/{temporada}/{episodio}
+  -> abre https://redeflixapi.click/serie/{id}/{t}/{e}
+- Em backend, o Puppeteer abre a página do provedor e, no próprio contexto da
+  página (fingerprint do navegador), lê o ticket (fastLaunchTickets) e chama
+  /playerkys/source.php — exatamente o que o player faz ao clicar em "Dublado",
+  mas SEM clicar no botão, então a propaganda (popunder) nunca abre. O script
+  de anúncio também é bloqueado e popups são fechados. Fallback: clica no botão
+  e captura a resposta. A URL vem do Cloudflare R2 (*.r2.cloudflarestorage.com).
+- A URL é validada com GET Range direto (o R2 recusa HEAD com 403) e só
+  depois é enviada ao navegador do usuário, que reproduz no próprio player.
+
+Proxies (Cloudflare bloqueia IP de datacenter)
+----------------------------------------------
+O acesso direto funciona em IP residencial (servidor Node do usuário). Em
+IP de datacenter (nuvem), o backend tenta proxies públicos das listas:
+- VPSLabCloud/VPSLab-Free-Proxy-List (all_proxies.txt)
+- hproxy-com/free-proxy-list (all.json, live.json)
+- proxyscrape e proxifly (proxies/all/data.json)
+- TheSpeedX, monosans (http.txt)
+
+Os proxies que funcionam são marcados e guardados em .proxy-temp.json (só os
+10 melhores, sempre tentados primeiro). Esse arquivo é local e NÃO entra no
+ZIP. Proxies públicos são instáveis: se todos falharem, tente novamente.
+
+Variáveis de ambiente
+---------------------
+- POPPLAY_PROXIES=0          desliga a busca por proxies
+- POPPLAY_PROXY_LIST=a://b,c  força uma lista fixa de proxies (teste)
+- POPPLAY_RESOLVE_TIMEOUT    tempo máx. da resolução em ms (padrão 170000)
+- PUPPETEER_NO_SANDBOX=1     necessário neste sandbox; em produção use sandbox
+- PYTHON_EXECUTABLE          binário do Python (padrão python3)
+
+Dependências do resolvedor de proxies (Python):
+  python3 -m pip install --user -r requirements-proxy.txt   (curl_cffi)
+
+Rodar
+-----
+  npm ci
+  npm run build
+  PORT=8001 npm start
+  abrir http://localhost:8001/?id=687163   (filme)
+  abrir http://localhost:8001/?tipo=serie&id=86897&t=1&e=1   (série)
+
+Na interface há um seletor FILME/SÉRIE; no modo série informe temporada e
+episódio. Também é possível passar ?id=, ?tipo=serie, &t=, &e= na URL.
+
+Listas de catálogo (para importação, conforme documentação do provedor):
+  https://redeflixapi.click/list-movie-ids.txt
+  https://redeflixapi.click/list-tv-ids.txt
+  https://redeflixapi.click/list-anime-ids.txt
+  https://redeflixapi.click/list-dorama-ids.txt
+
+Limitações
+-----------
+- URLs assinadas do R2 expiram; o Popplay reverte a busca se a fonte falhar.
+- Proxies gratuitos oscilam muito; em caso de erro, tente de novo.
+- Nunca logamos nem incluímos no ZIP as URLs assinadas de vídeo.
